@@ -36,9 +36,7 @@ public class FQCommentService {
 
     public CompletableFuture<FQNovelResponse<JsonNode>> getCommentIdeaList(FQCommentIdeaRequest request) {
         return CompletableFuture.supplyAsync(() -> {
-            DeviceInfo device = devicePoolService.nextDevice();
             String path = "/novel/commentapi/idea/list/" + request.getChapterId() + "/v1";
-            Map<String, String> queryParams = fqApiUtils.buildCommonApiParams(new FQVariable(device));
 
             Map<String, Object> businessParam = new LinkedHashMap<>();
             if (request.getBookId() != null && !request.getBookId().trim().isEmpty()) {
@@ -53,15 +51,13 @@ public class FQCommentService {
             if (!businessParam.isEmpty()) {
                 bodyMap.put("business_param", businessParam);
             }
-            return executeCommentPost(path, queryParams, bodyMap, "段评统计", request.getChapterId());
+            return executeCommentPost(path, bodyMap, "段评统计", request.getChapterId());
         });
     }
 
     public CompletableFuture<FQNovelResponse<JsonNode>> getCommentList(FQCommentListRequest request) {
         return CompletableFuture.supplyAsync(() -> {
-            DeviceInfo device = devicePoolService.nextDevice();
             String path = "/novel/commentapi/comment/list/" + request.getChapterId() + "/v1";
-            Map<String, String> queryParams = fqApiUtils.buildCommonApiParams(new FQVariable(device));
 
             Map<String, Object> businessParam = new LinkedHashMap<>();
             businessParam.put("book_id", request.getBookId());
@@ -80,15 +76,13 @@ public class FQCommentService {
                 bodyMap.put("cursor", request.getCursor());
             }
 
-            return executeCommentPost(path, queryParams, bodyMap, "段评详情", request.getChapterId());
+            return executeCommentPost(path, bodyMap, "段评详情", request.getChapterId());
         });
     }
 
     public CompletableFuture<FQNovelResponse<JsonNode>> getReplyList(FQCommentReplyListRequest request) {
         return CompletableFuture.supplyAsync(() -> {
-            DeviceInfo device = devicePoolService.nextDevice();
             String path = "/novel/commentapi/reply/list/" + request.getCommentId() + "/v1";
-            Map<String, String> queryParams = fqApiUtils.buildCommonApiParams(new FQVariable(device));
 
             Map<String, Object> businessParam = new LinkedHashMap<>();
             businessParam.put("book_id", request.getBookId());
@@ -105,13 +99,12 @@ public class FQCommentService {
                 bodyMap.put("cursor", request.getCursor());
             }
 
-            return executeCommentPost(path, queryParams, bodyMap, "段评回复列表", request.getCommentId());
+            return executeCommentPost(path, bodyMap, "段评回复列表", request.getCommentId());
         });
     }
 
     private FQNovelResponse<JsonNode> executeCommentPost(
             String path,
-            Map<String, String> queryParams,
             Map<String, Object> bodyMap,
             String apiLabel,
             String chapterId) {
@@ -122,6 +115,7 @@ public class FQCommentService {
             try {
                 String baseUrl = fqApiUtils.getBaseUrl();
                 String url = baseUrl + path;
+                Map<String, String> queryParams = fqApiUtils.buildCommonApiParams(new FQVariable(currentDevice));
                 String fullUrl = fqApiUtils.buildUrlWithParams(url, queryParams);
 
                 String body = objectMapper.writeValueAsString(bodyMap);
@@ -147,11 +141,7 @@ public class FQCommentService {
                 httpHeaders.set("server-channel", "17");
 
                 HttpEntity<String> entity = new HttpEntity<>(body, httpHeaders);
-                // 只记录脱敏后的调试信息（完整 headers 含 Cookie/签名头，WARN 级刷屏且泄密）
-                log.debug("段评请求 - url={}, body={}, cookie={}",
-                        fullUrl,
-                        CommonUtils.preview(body, 512),
-                        currentDevice != null ? currentDevice.getCookie() : null);
+                log.debug("{}请求 - id={}, attempt={}", apiLabel, chapterId, attempt);
                 ResponseEntity<byte[]> response = restTemplate.exchange(fullUrl, HttpMethod.POST, entity, byte[].class);
 
                 String responseBody = decompressGzipResponse(response.getBody());
@@ -160,6 +150,15 @@ public class FQCommentService {
                 }
 
                 JsonNode jsonResponse = objectMapper.readTree(responseBody);
+                if (bodyMap.containsKey("comment_id")) {
+                    JsonNode data = jsonResponse.path("data");
+                    JsonNode replies = data.path("reply_list");
+                    JsonNode info = data.path("comment_list_info");
+                    log.debug("段评回复响应 - commentId={}, code={}, returned={}, total={}, hasMore={}",
+                            chapterId, jsonResponse.path("code").asText(),
+                            replies.isArray() ? replies.size() : null,
+                            info.path("total").asText(), info.path("has_more").asText());
+                }
                 return FQNovelResponse.success(jsonResponse);
             } catch (Exception e) {
                 if (isEmptyResponseError(e)) {
